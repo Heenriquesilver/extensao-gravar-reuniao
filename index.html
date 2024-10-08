@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Gravador de Tela</title>
+    <style>
+      #recording-indicator {
+        display: none;
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: rgba(255, 0, 0, 0.7);
+        color: white;
+        padding: 10px;
+        border-radius: 5px;
+        z-index: 1000;
+      }
+      button {
+        cursor: pointer;
+        padding: 10px;
+        background-color: orangered;
+        color: azure;
+        font-size: medium;
+        font-weight: 500;
+        margin: 5px;
+      }
+      .container {
+        display: flex;
+        justify-content: center;
+        padding: 5px;
+        margin: 20px;
+        padding: 10px;
+        border: 1px solid #ccc;
+        background-color: #f9f9f9;
+      }
+      #instructions {
+        margin: 20px;
+        padding: 10px;
+        border: 1px solid #ccc;
+        background-color: #f9f9f9;
+      }
+      #notification {
+        display: none;
+        margin: 20px;
+        padding: 10px;
+        border: 1px solid #4caf50;
+        background-color: #dff0d8;
+        color: #3c763d;
+      }
+      #download-link {
+        display: none;
+        margin: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="instructions">
+      <h3>Instruções para Gravação</h3>
+      <p style="font-size: larger">
+        Clique no botão abaixo para iniciar uma nova reunião. Após isso, quando
+        a caixa de seleção aparecer, escolha a janela do Google Meet ou
+        Microsoft Teams para gravar.
+      </p>
+    </div>
+    <div class="container">
+      <button id="start-meet">Iniciar Reunião no Google Meet</button>
+      <button id="start-teams">Iniciar Reunião no Microsoft Teams</button>
+      <button id="stop" disabled>Parar Gravação</button>
+    </div>
+    <div id="recording-indicator">Gravando...</div>
+    <div id="notification">Gravação concluída com sucesso!</div>
+    <div id="download-link">
+      <a id="download-btn" href="#" download>Baixar Gravação</a>
+    </div>
+
+    <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1.12.min.js"></script>
+    <script>
+      let mediaRecorder;
+      let recordedChunks = [];
+      let videoBlob;
+
+      document
+        .getElementById("start-meet")
+        .addEventListener("click", async () => {
+          const meetUrl = "https://meet.google.com/new";
+          window.open(meetUrl, "_blank");
+          startScreenRecording();
+        });
+
+      document
+        .getElementById("start-teams")
+        .addEventListener("click", async () => {
+          const teamsUrl =
+            "https://teams.microsoft.com/l/meetup-join/19%3ameeting_NzIwOTk1MTYtNzgzYi00Mzc5LWEzYjktMjFiOTQzOWJkODdm%40thread.v2/0?context=%7b%22Tid%22%3a%221f9f5f2c-ff69-4fd1-94af-67a45ab2166d%22%2c%22Oid%22%3a%22505cf9cb-4b26-4ac7-b00b-08cd34f48f74%22%7d";
+          window.open(teamsUrl, "_blank");
+          startScreenRecording();
+        });
+
+      async function startScreenRecording() {
+        try {
+          // Captura a tela e o áudio do microfone
+          const audioStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+          const screenStream = await navigator.mediaDevices.getDisplayMedia({
+            video: { cursor: "always" },
+            audio: true,
+          });
+
+          // Conecta o áudio do microfone ao stream da tela
+          const mixedStream = new MediaStream([
+            ...screenStream.getTracks(),
+            ...audioStream.getTracks(),
+          ]);
+
+          startRecording(mixedStream);
+        } catch (err) {
+          console.error("Erro ao iniciar a gravação:", err);
+        }
+      }
+
+      function startRecording(stream) {
+        mediaRecorder = new MediaRecorder(stream);
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            recordedChunks.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          videoBlob = new Blob(recordedChunks, { type: "video/mp4" });
+          await uploadToS3(videoBlob);
+          recordedChunks = [];
+          document.getElementById("recording-indicator").style.display = "none";
+          document.getElementById("notification").style.display = "block"; // Exibe a notificação
+          const downloadBtn = document.getElementById("download-btn");
+          downloadBtn.href = URL.createObjectURL(videoBlob);
+          document.getElementById("download-link").style.display = "block"; // Exibe o botão de download
+        };
+
+        mediaRecorder.start();
+        document.getElementById("recording-indicator").style.display = "block";
+        document.getElementById("stop").disabled = false;
+      }
+
+      document.getElementById("stop").addEventListener("click", () => {
+        mediaRecorder.stop();
+        document.getElementById("stop").disabled = true;
+      });
+
+      async function uploadToS3(blob) {
+        const s3 = new AWS.S3({
+          accessKeyId: "YOUR_ACCESS_KEY",
+          secretAccessKey: "YOUR_SECRET_KEY",
+          region: "YOUR_REGION",
+        });
+
+        const params = {
+          Bucket: "YOUR_BUCKET_NAME",
+          Key: `meeting-${Date.now()}.mp4`,
+          Body: blob,
+          ContentType: "video/mp4",
+        };
+
+        try {
+          const data = await s3.upload(params).promise();
+          console.log("Upload concluído:", data.Location);
+        } catch (err) {
+          console.error("Erro no upload:", err);
+        }
+      }
+    </script>
+  </body>
+</html>
